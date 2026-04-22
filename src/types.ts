@@ -29,6 +29,8 @@ export interface GameState {
   phase: GamePhase;
   tutorialStep: number;
   lastTrickWinnerIndex: number | null;
+  lastTrickExplanation?: string;
+  lastTrickTip?: string;
   declarerIndex: number | null; // Who called the game
   partnerIndex: number | null; // Partner in Sauspiel
 }

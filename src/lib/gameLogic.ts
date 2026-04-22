@@ -85,3 +85,28 @@ export const shuffle = <T>(array: T[]): T[] => {
   }
   return newArray;
 };
+
+export const getTrickAnalysis = (
+  trick: { playerIndex: number; card: Card }[],
+  trumpSuit: Suit | 'None',
+  humanIndices: number[] = [0]
+) => {
+  const winnerIndex = getTrickWinner(trick, trumpSuit);
+  const winningPlay = trick.find(t => t.playerIndex === winnerIndex)!;
+  const ledCard = trick[0].card;
+  const winnerCard = winningPlay.card;
+  const isWinnerTrump = isTrump(winnerCard, trumpSuit);
+
+  let explanation = "";
+  if (isWinnerTrump) {
+    if (isTrump(ledCard, trumpSuit)) {
+      explanation = `${winnerCard.suit} ${winnerCard.rank} war der stärkste Trumpf in diesem Stich.`;
+    } else {
+      explanation = `${winnerCard.suit} ${winnerCard.rank} hat gestochen, da ${ledCard.suit} angespielt wurde, aber dieser Trumpf höher war als alle anderen Karten.`;
+    }
+  } else {
+    explanation = `${winnerCard.suit} ${winnerCard.rank} war die höchste Karte der angespielten Farbe (${ledCard.suit}).`;
+  }
+
+  return { winnerIndex, explanation };
+};

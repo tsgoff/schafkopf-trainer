@@ -17,7 +17,9 @@ import {
   shuffle, 
   getPlayableCards, 
   getTrickWinner, 
-  isTrump 
+  isTrump,
+  getTrickAnalysis,
+  getCardPower
 } from './lib/gameLogic';
 import { 
   Trophy, 
@@ -25,7 +27,8 @@ import {
   ChevronRight, 
   RotateCcw, 
   Play,
-  HelpCircle
+  HelpCircle,
+  Lightbulb
 } from 'lucide-react';
 
 const INITIAL_STATE: GameState = {
@@ -37,6 +40,8 @@ const INITIAL_STATE: GameState = {
   phase: 'Dealing',
   tutorialStep: 0,
   lastTrickWinnerIndex: null,
+  lastTrickExplanation: '',
+  lastTrickTip: '',
   declarerIndex: 0,
   partnerIndex: null,
 };
@@ -45,6 +50,10 @@ export default function App() {
   const [gameState, setGameState] = useState<GameState>(INITIAL_STATE);
   const [showTutorial, setShowTutorial] = useState(true);
   const [message, setMessage] = useState<string>('Willkommen zum Schafkopf Trainer!');
+
+  // Track the human's hand at the start of their turn in a trick
+  const [humanHandBeforePlay, setHumanHandBeforePlay] = useState<Card[]>([]);
+  const [trickAtHumanPlay, setTrickAtHumanPlay] = useState<{ playerIndex: number; card: Card }[]>([]);
 
   const startNewGame = useCallback(() => {
     const deck = shuffle(createDeck());
@@ -62,9 +71,16 @@ export default function App() {
       tutorialStep: 1,
     });
     setMessage('Die Karten wurden gemischt und gegeben. Du bist an der Reihe!');
+    setHumanHandBeforePlay([]);
+    setTrickAtHumanPlay([]);
   }, []);
 
   const playCard = (playerIndex: number, card: Card) => {
+    if (playerIndex === 0) {
+      setHumanHandBeforePlay(gameState.players[0].hand);
+      setTrickAtHumanPlay(gameState.currentTrick);
+    }
+
     setGameState(prev => {
       const newPlayers = prev.players.map((p, idx) => {
         if (idx === playerIndex) {
@@ -77,7 +93,8 @@ export default function App() {
       
       // If trick is full
       if (newTrick.length === 4) {
-        const winnerIdx = getTrickWinner(newTrick, prev.trumpSuit);
+        const analysis = getTrickAnalysis(newTrick, prev.trumpSuit);
+        const winnerIdx = analysis.winnerIndex;
         const trickPoints = newTrick.reduce((sum, t) => sum + t.card.points, 0);
         
         const updatedPlayers = newPlayers.map((p, idx) => {
@@ -91,6 +108,54 @@ export default function App() {
           return p;
         });
 
+        // Generate Tip for human
+        let trickTip = "";
+        const humanPlay = newTrick.find(t => t.playerIndex === 0);
+        if (humanPlay) {
+          if (winnerIdx === 0) {
+            trickTip = "Glückwunsch! Du hast den Stich gewonnen. Das war die richtige Karte.";
+          } else {
+            // Find if any card in humanHandBeforePlay would have won
+            // We need to simulate the trick with that card instead of current humanPlay
+            const playableAtStart = getPlayableCards(
+              playerIndex === 0 ? prev.players[0].hand : humanHandBeforePlay, 
+              playerIndex === 0 ? prev.currentTrick : trickAtHumanPlay, 
+              prev.trumpSuit
+            );
+            
+            const winningCards = playableAtStart.filter(c => {
+               // Simulate: card c beats all other cards actually played in this trick
+               const others = newTrick.filter(t => t.playerIndex !== 0).map(t => t.card);
+               const powerC = getCardPower(c, prev.trumpSuit);
+               const isTrumpC = isTrump(c, prev.trumpSuit);
+               
+               return others.every(other => {
+                 const powerO = getCardPower(other, prev.trumpSuit);
+                 const isTrumpO = isTrump(other, prev.trumpSuit);
+                 
+                 if (isTrumpC && !isTrumpO) return true;
+                 if (!isTrumpC && isTrumpO) return false;
+                 if (isTrumpC && isTrumpO) return powerC > powerO;
+                 
+                 // Both not trump
+                 const ledCard = newTrick[0].card;
+                 if (c.suit === ledCard.suit && other.suit !== ledCard.suit) return true;
+                 if (c.suit !== ledCard.suit && other.suit === ledCard.suit) return false;
+                 if (c.suit === ledCard.suit && other.suit === ledCard.suit) return powerC > powerO;
+                 
+                 return true; // neither is trump or led suit, so they don't beat each other anyway
+               });
+            });
+
+            if (winningCards.length > 0) {
+              const best = winningCards.sort((a,b) => getCardPower(a, prev.trumpSuit) - getCardPower(b, prev.trumpSuit))[0];
+              trickTip = `Schade. Hättest du ${best.suit} ${best.rank} gespielt, hättest du gewinnen können.`;
+            } else {
+              trickTip = "Keine Sorge, in diesem Stich hattest du keine Karte, die hätte gewinnen können.";
+            }
+          }
+        }
+
         // Check if game is over
         const isGameOver = updatedPlayers.every(p => p.hand.length === 0);
 
@@ -100,6 +165,8 @@ export default function App() {
           currentTrick: [],
           currentPlayerIndex: winnerIdx,
           lastTrickWinnerIndex: winnerIdx,
+          lastTrickExplanation: analysis.explanation,
+          lastTrickTip: trickTip,
           phase: isGameOver ? 'Scoring' : 'Playing',
         };
       }
@@ -168,9 +235,9 @@ export default function App() {
         </div>
       </header>
 
-      <main className="container mx-auto p-4 flex flex-col lg:flex-row gap-6 h-[calc(100vh-80px)]">
+      <main className="container mx-auto p-4 flex flex-col lg:flex-row gap-6 h-auto lg:h-[calc(100vh-80px)]">
         {/* Game Area */}
-        <div className="flex-1 relative bg-black/10 rounded-3xl border border-white/5 overflow-hidden flex flex-col">
+        <div className="flex-1 relative bg-black/10 rounded-3xl border border-white/5 overflow-hidden flex flex-col min-h-[600px]">
           {gameState.phase === 'Dealing' ? (
             <div className="flex-1 flex flex-col items-center justify-center gap-6">
               <motion.div 
@@ -298,7 +365,40 @@ export default function App() {
         </div>
 
         {/* Info/Tutorial Panel */}
-        <aside className="w-full lg:w-96 flex flex-col gap-4">
+        <aside className="w-full lg:w-96 flex flex-col gap-4 lg:overflow-y-auto custom-scrollbar lg:pr-2">
+          {/* Last Trick Analysis */}
+          {gameState.lastTrickWinnerIndex !== null && (
+            <motion.div 
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              className="bg-white/5 rounded-3xl p-6 border border-white/10"
+            >
+              <div className="flex items-center gap-3 mb-4">
+                <div className="p-2 bg-amber-500/20 rounded-lg">
+                  <Play className="text-amber-400 rotate-90" size={20} />
+                </div>
+                <h3 className="font-bold">Letzter Stich</h3>
+              </div>
+              
+              <div className="space-y-4">
+                <div className="text-sm p-3 bg-white/5 rounded-xl border border-white/10">
+                  <p className="font-bold text-emerald-400 mb-1">Erklärung:</p>
+                  <p className="text-emerald-100/80 leading-snug">{gameState.lastTrickExplanation}</p>
+                </div>
+
+                {gameState.lastTrickTip && (
+                  <div className="text-sm p-3 bg-amber-500/10 rounded-xl border border-amber-500/20 flex gap-3">
+                    <Lightbulb className="text-amber-400 shrink-0" size={18} />
+                    <div>
+                      <p className="font-bold text-amber-400 mb-1">Tipp:</p>
+                      <p className="text-amber-100/90 leading-snug">{gameState.lastTrickTip}</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+
           {/* Status Card */}
           <div className="bg-white/5 rounded-3xl p-6 border border-white/10">
             <div className="flex items-center gap-3 mb-4">
